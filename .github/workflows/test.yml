@@ -1,0 +1,78 @@
+name: CI Pipeline
+
+on:
+  - push
+  - pull_request
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version:
+          - stable
+          - oldstable
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: false
+
+      - name: Install Go dependencies
+        if: hashFiles('go.mod') != ''
+        run: go mod download
+
+      - name: Check Go formatting
+        if: hashFiles('go.mod') != ''
+        run: |
+          test -z "$(gofmt -l $(find . -type f -name '*.go' -not -path './.git/*'))"
+
+      - name: Check Go lint
+        if: hashFiles('go.mod') != ''
+        run: |
+          test -z "$(golangci-lint run)"
+
+      - name: Build Go modules
+        if: hashFiles('go.mod') != ''
+        run: go build ./...
+
+      - name: Run Go unit and integration tests
+        if: hashFiles('go.mod') != ''
+        run: go test ./...
+
+      - name: Write pipeline summary
+        if: always()
+        env:
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          SETUP_GO_OUTCOME: ${{ steps.setup-go.outcome }}
+          DEPS_OUTCOME: ${{ steps.go-deps.outcome }}
+          FORMAT_OUTCOME: ${{ steps.go-format.outcome }}
+          LINT_OUTCOME: ${{ steps.go-lint.outcome }}
+          BUILD_OUTCOME: ${{ steps.go-build.outcome }}
+          TEST_OUTCOME: ${{ steps.go-test.outcome }}
+        run: |
+          {
+            printf '## CI outcome\n\n'
+            printf '| Step | Outcome |\n'
+            printf '|---|---|\n'
+            printf '| Checkout | %s |\n' "$CHECKOUT_OUTCOME"
+            printf '| Setup Go | %s |\n' "$SETUP_GO_OUTCOME"
+            printf '| Install dependencies | %s |\n' "$DEPS_OUTCOME"
+            printf '| Check formatting | %s |\n' "$FORMAT_OUTCOME"
+            printf '| Check lint | %s |\n' "$LINT_OUTCOME"
+            printf '| Build modules | %s |\n' "$BUILD_OUTCOME"
+            printf '| Unit and integration tests | %s |\n' "$TEST_OUTCOME"
+          } >> "$GITHUB_STEP_SUMMARY"
